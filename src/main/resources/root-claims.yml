@@ -80,7 +80,7 @@ notifications:
   enabled: true
 
 messages:
-  prefix: "&6[Claims] &r"
+  prefix: ""
   towny-redirect: "&eThis server uses Claims, not Towny. Use &f/c &eor &f/claims&e. Return to Towny: &f/goto towny&e, &f/town&e, &f/towns&e, or &f/t towny&e."
   disabled: "&cClaims are not enabled yet."
   players-only: "&cPlayers only."

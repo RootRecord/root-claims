@@ -12,7 +12,7 @@ unsafe-warn:
   interval-seconds: 12
 
 messages:
-  prefix: "&6[Road] &r"
+  prefix: ""
   welcome:
     - ""
     - "&6&lWelcome to {server}, {player}."

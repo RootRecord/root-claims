@@ -297,7 +297,7 @@ public final class RootClaimsPlugin extends JavaPlugin {
                 cfg.getDouble("bluemap.territory-fill-alpha", 0.12)));
         bluemapTerritoryLineWidth = Math.max(1, cfg.getInt("bluemap.territory-line-width", 1));
         notificationsEnabled = cfg.getBoolean("notifications.enabled", true);
-        prefix = cfg.getString("messages.prefix", "&6[Claims] &r");
+        prefix = cfg.getString("messages.prefix", "");
     }
 
     public boolean enabledFlag() {

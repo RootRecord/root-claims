@@ -96,7 +96,7 @@ public final class RootRoadPlugin {
         unsafeWarnEnabled = cfg.getBoolean("unsafe-warn.enabled", true);
         long seconds = Math.max(5L, cfg.getLong("unsafe-warn.interval-seconds", 12));
         unsafeWarnIntervalTicks = seconds * 20L;
-        prefix = cfg.getString("messages.prefix", "&6[Road] &r");
+        prefix = cfg.getString("messages.prefix", "");
     }
 
     private void startUnsafeWarnTask() {
