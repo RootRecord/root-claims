@@ -2,7 +2,7 @@ plugins {
     java
 }
 
-version = "1.7.3"
+version = "1.7.8"
 
 repositories {
     maven("https://repo.bluecolored.de/releases")

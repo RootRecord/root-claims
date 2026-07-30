@@ -45,7 +45,7 @@ public final class ClaimService {
         if (!isAdmin(player)) {
             int neededMaxed = areaCount;
             int haveMaxed = store.countLevel10Areas(player.getUniqueId(), plugin.maxLevelPerArea());
-            if (haveMaxed < neededMaxed) {
+            if (plugin.requirePriorAreasAtMax() && haveMaxed < neededMaxed) {
                 store.appendHistory(
                         "area_found",
                         "area_locked",
@@ -303,7 +303,7 @@ public final class ClaimService {
         if (!isAdmin(player)) {
             int neededMaxed = areaCount;
             int haveMaxed = store.countLevel10Areas(player.getUniqueId(), plugin.maxLevelPerArea());
-            if (haveMaxed < neededMaxed) {
+            if (plugin.requirePriorAreasAtMax() && haveMaxed < neededMaxed) {
                 return new Result(Status.AREA_LOCKED, null, 0, haveMaxed, neededMaxed);
             }
         }

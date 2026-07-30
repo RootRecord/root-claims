@@ -80,7 +80,7 @@ public final class ClaimsDashboard {
                 "&7Areas: &f" + claims.rootsOwnedBy(player.getUniqueId()).size()
                         + "&7 / &f" + plugin.maxAreasPerPlayer(),
                 "&7Circles: &f" + owned.size() + "&7 / &f" + plugin.maxClaimsPerPlayer(),
-                "&7Next: &f" + GoldMoney.format(nextPrice) + " G",
+                "&7Next: &f" + formatNextPrice(nextPrice),
                 "",
                 "&8Area banks fund expansions."));
 
@@ -169,10 +169,10 @@ public final class ClaimsDashboard {
 
         inv.setItem(SLOT_NEW_CLAIM, item(
                 Material.GOLDEN_SHOVEL,
-                roots.isEmpty() ? "&aNew area" : "&aExpand / new",
+                roots.isEmpty() ? "&aNew area (free)" : "&aExpand / new",
                 "&7Close this menu and confirm in chat.",
                 "&7/c new &7found area · &f/c claim &7expand",
-                "&7Price: &f" + GoldMoney.format(nextPrice) + " G"));
+                "&7Price: &f" + formatNextPrice(nextPrice)));
         inv.setItem(SLOT_LINES, item(
                 Material.END_CRYSTAL,
                 "&dClaim lines",
@@ -251,6 +251,13 @@ public final class ClaimsDashboard {
     static long claimedBlocksFor(ClaimRecord claim) {
         int r = Math.max(1, claim.radiusBlocks());
         return Math.round(Math.PI * (double) r * (double) r);
+    }
+
+    private static String formatNextPrice(double nextPrice) {
+        if (nextPrice <= 0) {
+            return "Free";
+        }
+        return GoldMoney.format(nextPrice) + " G";
     }
 
     private ItemStack item(Material material, String title, String... loreLines) {

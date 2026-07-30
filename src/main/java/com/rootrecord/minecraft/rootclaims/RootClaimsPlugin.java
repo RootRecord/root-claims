@@ -60,12 +60,16 @@ public final class RootClaimsPlugin extends JavaPlugin {
     private boolean territoryAlertsEnabled = true;
     private long territoryAlertCooldownMs = 60_000L;
     private boolean allowTrustedExpansion = false;
+    private boolean requirePriorAreasAtMax = true;
     private boolean economyEnabled = true;
-    private double[] areaPricesGold = new double[] {75, 1000, 10000};
+    private double[] areaPricesGold = new double[] {0, 1000, 10000};
+    private double[] expansionPricesGold = new double[0];
     private double firstClaimBankSeedGold = 25;
     private double expansionBasePriceGold = 75;
     private double expansionMultiplier = 1.5;
     private double unclaimRefundPercent = 50;
+    private long confirmTtlMillis = 30_000L;
+    private long spawnCooldownMillis = 3_000L;
     private String treasuryChannel = "service-fee:claim";
     private boolean protectContainers = true;
     private boolean protectInteractables = true;
@@ -241,6 +245,7 @@ public final class RootClaimsPlugin extends JavaPlugin {
                 "limits.max-areas-per-player",
                 cfg.getInt("limits.max-claims-per-player", 3)));
         maxLevelPerArea = Math.max(1, cfg.getInt("limits.max-level-per-area", 10));
+        requirePriorAreasAtMax = cfg.getBoolean("limits.require-prior-areas-at-max", true);
         anchorRadiusBlocks = Math.max(1, cfg.getInt("anchors.radius-blocks", 16));
         edgeToleranceBlocks = Math.max(0, cfg.getInt("anchors.edge-tolerance-blocks", 3));
         territoryBufferBlocks = Math.max(0, cfg.getInt("territory.buffer-blocks", 48));
@@ -249,6 +254,7 @@ public final class RootClaimsPlugin extends JavaPlugin {
         allowTrustedExpansion = cfg.getBoolean("anchors.allow-trusted-expansion", false);
         economyEnabled = cfg.getBoolean("economy.enabled", true);
         areaPricesGold = loadAreaPrices(cfg);
+        expansionPricesGold = loadDoubleList(cfg, "economy.expansion-prices-g");
         firstClaimBankSeedGold = Math.max(0, Math.min(
                 areaPriceForSlot(0),
                 cfg.getDouble(
@@ -260,6 +266,8 @@ public final class RootClaimsPlugin extends JavaPlugin {
         expansionMultiplier = Math.max(1.0, cfg.getDouble("economy.expansion-multiplier", 1.5));
         unclaimRefundPercent = Math.max(0, Math.min(100, cfg.getDouble("economy.unclaim-refund-percent", 50)));
         treasuryChannel = cfg.getString("economy.treasury-channel", "service-fee:claim");
+        confirmTtlMillis = Math.max(5_000L, cfg.getLong("timings.confirm-ttl-seconds", 30L) * 1000L);
+        spawnCooldownMillis = Math.max(0L, cfg.getLong("timings.spawn-cooldown-seconds", 3L) * 1000L);
         protectContainers = cfg.getBoolean("protection.protect-containers", true);
         protectInteractables = cfg.getBoolean("protection.protect-doors-buttons-and-redstone", true);
         protectEntities = cfg.getBoolean("protection.protect-entities", true);
@@ -340,6 +348,18 @@ public final class RootClaimsPlugin extends JavaPlugin {
         return allowTrustedExpansion;
     }
 
+    public boolean requirePriorAreasAtMax() {
+        return requirePriorAreasAtMax;
+    }
+
+    public long confirmTtlMillis() {
+        return confirmTtlMillis;
+    }
+
+    public long spawnCooldownMillis() {
+        return spawnCooldownMillis;
+    }
+
     public boolean economyEnabled() {
         return economyEnabled;
     }
@@ -385,6 +405,11 @@ public final class RootClaimsPlugin extends JavaPlugin {
             return 0;
         }
         int level = Math.max(1, currentLevel);
+        int idx = level - 1;
+        if (expansionPricesGold != null && expansionPricesGold.length > 0) {
+            int use = Math.min(idx, expansionPricesGold.length - 1);
+            return Math.round(Math.max(0, expansionPricesGold[use]) * 1000.0) / 1000.0;
+        }
         double price = expansionBasePriceGold * Math.pow(expansionMultiplier, level - 1);
         return Math.round(price * 1000.0) / 1000.0;
     }
@@ -395,20 +420,28 @@ public final class RootClaimsPlugin extends JavaPlugin {
     }
 
     private static double[] loadAreaPrices(FileConfiguration cfg) {
-        List<?> raw = cfg.getList("economy.area-prices-g");
-        if (raw != null && !raw.isEmpty()) {
-            double[] prices = new double[raw.size()];
-            for (int i = 0; i < raw.size(); i++) {
-                Object value = raw.get(i);
-                prices[i] = value instanceof Number number ? Math.max(0, number.doubleValue()) : 0;
-            }
-            return prices;
+        double[] listed = loadDoubleList(cfg, "economy.area-prices-g");
+        if (listed.length > 0) {
+            return listed;
         }
         return new double[] {
                 Math.max(0, cfg.getDouble("economy.first-claim-price-g", 75)),
                 Math.max(0, cfg.getDouble("economy.second-area-price-g", 1000)),
                 Math.max(0, cfg.getDouble("economy.third-area-price-g", 10000))
         };
+    }
+
+    private static double[] loadDoubleList(FileConfiguration cfg, String path) {
+        List<?> raw = cfg.getList(path);
+        if (raw == null || raw.isEmpty()) {
+            return new double[0];
+        }
+        double[] prices = new double[raw.size()];
+        for (int i = 0; i < raw.size(); i++) {
+            Object value = raw.get(i);
+            prices[i] = value instanceof Number number ? Math.max(0, number.doubleValue()) : 0;
+        }
+        return prices;
     }
 
     public double unclaimRefundPercent() {

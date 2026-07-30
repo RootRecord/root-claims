@@ -1,6 +1,9 @@
 package com.rootrecord.minecraft.rootclaims.command;
 
 import com.rootrecord.minecraft.common.ChatLinks;
+import com.rootrecord.minecraft.common.GoldMoney;
+import com.rootrecord.minecraft.common.RootMcEconomyResolver;
+import com.rootrecord.minecraft.common.RootMcEconomyService;
 import com.rootrecord.minecraft.common.RootMcMapUrls;
 import com.rootrecord.minecraft.rootclaims.ClaimKey;
 import com.rootrecord.minecraft.rootclaims.ClaimRecord;
@@ -28,8 +31,6 @@ import java.util.stream.Stream;
 public final class ClaimCommand implements CommandExecutor, TabCompleter {
 
     private static final DecimalFormat GOLD = new DecimalFormat("0.###");
-    private static final long CONFIRM_TTL_MILLIS = 30_000L;
-    private static final long SPAWN_COOLDOWN_MILLIS = 3_000L;
 
     private final RootClaimsPlugin plugin;
     private final ClaimService claims;
@@ -67,6 +68,7 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
             case "spawn", "home" -> handleSpawn(player, args);
             case "set" -> handleSet(player, args);
             case "bank" -> handleBank(player, args);
+            case "deposit" -> handleDeposit(player, args);
             case "balance", "bal" -> sendBankInfoForCurrentClaim(player);
             case "toggle" -> handleToggle(player, args);
             case "confirm" -> confirmPending(player);
@@ -134,10 +136,12 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
         double price = preview.amount() > 0 ? preview.amount() : claims.nextAreaFoundingPrice(player.getUniqueId());
         final String name = requestedName;
         queue(player, () -> sendFoundResult(player, claims.foundArea(player, name)));
-        sendConfirmPrompt(player, plugin.msg("confirm-area-found")
+        String areaLabel = name == null || name.isBlank() ? "auto" : name.trim();
+        String confirmKey = price <= 0 ? "confirm-area-found-free" : "confirm-area-found";
+        sendConfirmPrompt(player, plugin.msg(confirmKey)
                 .replace("{price}", GOLD.format(price))
-                .replace("{name}", name == null || name.isBlank() ? "auto" : name.trim())
-                .replace("{seconds}", String.valueOf(CONFIRM_TTL_MILLIS / 1000L)));
+                .replace("{name}", areaLabel)
+                .replace("{seconds}", String.valueOf(plugin.confirmTtlMillis() / 1000L)));
     }
 
     private void queueExpandArea(Player player) {
@@ -149,13 +153,14 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
         queue(player, () -> sendClaimResult(player, claims.expandArea(player)));
         sendConfirmPrompt(player, plugin.msg("confirm-claim-expansion")
                 .replace("{price}", GOLD.format(price))
-                .replace("{seconds}", String.valueOf(CONFIRM_TTL_MILLIS / 1000L)));
+                .replace("{seconds}", String.valueOf(plugin.confirmTtlMillis() / 1000L)));
     }
 
     private boolean sendPreviewFailure(Player player, ClaimService.Result preview) {
         switch (preview.status()) {
             case NEEDS_EDGE -> {
-                player.sendMessage(plugin.msg("claim-needs-edge"));
+                player.sendMessage(plugin.msg("claim-needs-edge")
+                        .replace("{tolerance}", String.valueOf(plugin.edgeToleranceBlocks())));
                 return false;
             }
             case NEEDS_AREA -> {
@@ -222,7 +227,8 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
         queue(player, () -> sendUnclaimResult(player, claims.unclaim(player)));
         sendConfirmPrompt(player, replace(plugin.msg("confirm-unclaim"), claim)
                 .replace("{refund}", GOLD.format(refund))
-                .replace("{seconds}", String.valueOf(CONFIRM_TTL_MILLIS / 1000L)));
+                .replace("{refund_pct}", GOLD.format(plugin.unclaimRefundPercent()))
+                .replace("{seconds}", String.valueOf(plugin.confirmTtlMillis() / 1000L)));
     }
 
     private void queueUnclaimAll(Player player) {
@@ -245,8 +251,9 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
                 .replace("{count}", String.valueOf(count))
                 .replace("{refund}", GOLD.format(landRefund))
                 .replace("{bank}", GOLD.format(bankTotal))
+                .replace("{refund_pct}", GOLD.format(plugin.unclaimRefundPercent()))
                 .replace("{seed}", GOLD.format(plugin.firstClaimBankSeedGold()))
-                .replace("{seconds}", String.valueOf(CONFIRM_TTL_MILLIS / 1000L)));
+                .replace("{seconds}", String.valueOf(plugin.confirmTtlMillis() / 1000L)));
     }
 
     private void handleSpawn(Player player, String[] args) {
@@ -287,7 +294,7 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
             return;
         }
         if (teleportToClaimSpawn(player, target)) {
-            spawnCooldownUntil.put(player.getUniqueId(), now + SPAWN_COOLDOWN_MILLIS);
+            spawnCooldownUntil.put(player.getUniqueId(), now + plugin.spawnCooldownMillis());
         }
     }
 
@@ -381,7 +388,7 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
         queue(player, () -> sendTrustResult(player, target, trust, name));
         sendConfirmPrompt(player, replace(plugin.msg(trust ? "confirm-trust" : "confirm-untrust"), claim)
                 .replace("{player}", name)
-                .replace("{seconds}", String.valueOf(CONFIRM_TTL_MILLIS / 1000L)));
+                .replace("{seconds}", String.valueOf(plugin.confirmTtlMillis() / 1000L)));
     }
 
     private void sendConfirmPrompt(Player player, String body) {
@@ -429,7 +436,8 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
             if (!enabled) {
                 int removed = claims.despawnHostiles(claim);
                 player.sendMessage(plugin.msg("toggle-mobs-off")
-                        .replace("{count}", String.valueOf(removed)));
+                        .replace("{count}", String.valueOf(removed))
+                        .replace("{buffer}", String.valueOf(plugin.territoryBufferBlocks())));
             } else {
                 player.sendMessage(plugin.msg("toggle-mobs-on"));
             }
@@ -463,9 +471,31 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
             player.sendMessage(plugin.msg("bank-usage"));
             return;
         }
-        Double amount = parseAmount(args[2]);
+        runDeposit(player, claim, args[2]);
+    }
+
+    /** `/c deposit <amount|all>` — same as `/c bank deposit …`. */
+    private void handleDeposit(Player player, String[] args) {
+        ClaimRecord claim = bankTarget(player);
+        if (claim == null) {
+            player.sendMessage(plugin.msg("bank-no-claim"));
+            return;
+        }
+        if (args.length < 2) {
+            player.sendMessage(plugin.msg("bank-usage"));
+            return;
+        }
+        runDeposit(player, claim, args[1]);
+    }
+
+    private void runDeposit(Player player, ClaimRecord claim, String amountRaw) {
+        Double amount = resolveDepositAmount(player, amountRaw);
         if (amount == null) {
             player.sendMessage(plugin.msg("bank-usage"));
+            return;
+        }
+        if (amount < GoldMoney.MIN_AMOUNT) {
+            player.sendMessage(plugin.msg("bank-deposit-empty"));
             return;
         }
         ClaimBankService.Result result = claims.depositToBank(player, claim, amount);
@@ -479,6 +509,21 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
         }
     }
 
+    /** Parses a positive amount, or wallet balance when {@code all}. Null = bad input. */
+    private Double resolveDepositAmount(Player player, String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        if ("all".equalsIgnoreCase(raw.trim())) {
+            RootMcEconomyService economy = RootMcEconomyResolver.resolve(plugin);
+            if (economy == null) {
+                return 0d;
+            }
+            return GoldMoney.round(economy.balance(player.getUniqueId()));
+        }
+        return parseAmount(raw);
+    }
+
     private void sendBankInfoForCurrentClaim(Player player) {
         ClaimRecord claim = bankTarget(player);
         if (claim == null) {
@@ -489,7 +534,7 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
     }
 
     private void queue(Player player, Runnable action) {
-        pendingActions.put(player.getUniqueId(), PendingAction.of(player, action));
+        pendingActions.put(player.getUniqueId(), PendingAction.of(player, action, plugin.confirmTtlMillis()));
     }
 
     private void confirmPending(Player player) {
@@ -559,7 +604,8 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
             case DISABLED -> player.sendMessage(plugin.msg("disabled"));
             case NEEDS_AREA -> player.sendMessage(plugin.msg("claim-needs-area"));
             case ALREADY_CLAIMED -> player.sendMessage(replace(plugin.msg("claim-already-owned"), result.claim()));
-            case NEEDS_EDGE -> player.sendMessage(plugin.msg("claim-needs-edge"));
+            case NEEDS_EDGE -> player.sendMessage(plugin.msg("claim-needs-edge")
+                    .replace("{tolerance}", String.valueOf(plugin.edgeToleranceBlocks())));
             case OVERLAPS_OTHER -> player.sendMessage(replace(plugin.msg("claim-overlaps-other"), result.claim()));
             case FOREIGN_TERRITORY -> player.sendMessage(replace(plugin.msg("claim-foreign-territory"), result.claim())
                     .replace("{buffer}", String.valueOf(plugin.territoryBufferBlocks())));
@@ -606,6 +652,7 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
                 if (result.amount() > 0) {
                     player.sendMessage(plugin.msg("unclaim-all-land-refund")
                             .replace("{amount}", GOLD.format(result.amount()))
+                            .replace("{refund_pct}", GOLD.format(plugin.unclaimRefundPercent()))
                             .replace("{seed}", GOLD.format(plugin.firstClaimBankSeedGold())));
                 }
                 if (result.secondaryAmount() > 0) {
@@ -756,7 +803,7 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (args.length == 1) {
-            return filter(args[0], Stream.of("claim", "expand", "new", "menu", "confirm", "cancel", "spawn", "set", "bank", "balance", "bal", "chest", "toggle", "info", "list", "lines", "unclaim", "add", "trust", "untrust", "help", "reload").toList());
+            return filter(args[0], Stream.of("claim", "expand", "new", "menu", "confirm", "cancel", "spawn", "set", "bank", "deposit", "balance", "bal", "chest", "toggle", "info", "list", "lines", "unclaim", "add", "trust", "untrust", "help", "reload").toList());
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("set")) {
             return filter(args[1], List.of("spawn"));
@@ -764,8 +811,14 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
         if (args.length == 2 && (args[0].equalsIgnoreCase("unclaim") || args[0].equalsIgnoreCase("remove"))) {
             return filter(args[1], List.of("all"));
         }
+        if (args.length == 2 && args[0].equalsIgnoreCase("deposit")) {
+            return filter(args[1], List.of("all"));
+        }
         if (args.length == 2 && args[0].equalsIgnoreCase("bank")) {
             return filter(args[1], List.of("info", "balance", "bal", "deposit"));
+        }
+        if (args.length == 3 && args[0].equalsIgnoreCase("bank") && args[1].equalsIgnoreCase("deposit")) {
+            return filter(args[2], List.of("all"));
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("toggle")) {
             return filter(args[1], List.of("mobs", "spawn", "public"));
@@ -802,13 +855,13 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
     }
 
     private record PendingAction(String world, int x, int y, int z, long expiresAtMillis, Runnable action) {
-        static PendingAction of(Player player, Runnable action) {
+        static PendingAction of(Player player, Runnable action, long ttlMillis) {
             return new PendingAction(
                     player.getWorld().getName(),
                     player.getLocation().getBlockX(),
                     player.getLocation().getBlockY(),
                     player.getLocation().getBlockZ(),
-                    System.currentTimeMillis() + CONFIRM_TTL_MILLIS,
+                    System.currentTimeMillis() + ttlMillis,
                     action);
         }
 

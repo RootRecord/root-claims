@@ -120,7 +120,9 @@ public final class ClaimsSettingsGui {
         claims.recordSettingToggle(player, claim, "mobs", next);
         if (!next) {
             int removed = claims.despawnHostiles(claim);
-            player.sendMessage(plugin.msg("toggle-mobs-off").replace("{count}", String.valueOf(removed)));
+            player.sendMessage(plugin.msg("toggle-mobs-off")
+                    .replace("{count}", String.valueOf(removed))
+                    .replace("{buffer}", String.valueOf(plugin.territoryBufferBlocks())));
         } else {
             player.sendMessage(plugin.msg("toggle-mobs-on"));
         }

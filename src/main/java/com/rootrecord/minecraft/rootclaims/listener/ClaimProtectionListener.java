@@ -137,8 +137,13 @@ public final class ClaimProtectionListener implements Listener {
             return;
         }
         ClaimRecord claim = store.containing(player.getLocation());
-        if (claim != null && !claim.mobsAllowed()) {
-            event.setCancelled(true);
+        if (claim == null || claim.mobsAllowed()) {
+            return;
+        }
+        // Block aggro into the claim circle only — do not delete mobs in the territory band.
+        event.setCancelled(true);
+        ClaimRecord mobClaim = store.containing(event.getEntity().getLocation());
+        if (mobClaim != null && !mobClaim.mobsAllowed()) {
             event.getEntity().remove();
         }
     }

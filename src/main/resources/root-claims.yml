@@ -1,8 +1,11 @@
 enabled: true
 
+# ─── All gameplay metrics live here (edit + /c reload or restart) ───
 limits:
   max-areas-per-player: 3
   max-level-per-area: 10
+  # Slot 2+ requires that many prior areas at max level (set false to allow any order).
+  require-prior-areas-at-max: true
 
 anchors:
   radius-blocks: 16
@@ -22,15 +25,24 @@ territory:
 
 economy:
   enabled: true
-  # Founding costs for area slots 1 / 2 / 3 (wallet). Slot 2+ requires prior areas at max level.
-  area-prices-g: [75.0, 1000.0, 10000.0]
-  # Only the first area seeds its bank from the founding fee.
-  first-area-bank-seed-g: 25.0
-  # Expansions: 75 G × 1.5^(level-1), paid from that area's bank.
+  # Founding costs for area slots 1 / 2 / 3… (wallet). Length can be any size ≤ max-areas.
+  # Slot 1 is free (0 G); expansions still charge the area bank. Slots 2+ stay paid.
+  area-prices-g: [0.0, 1000.0, 10000.0]
+  # First-area bank seed from founding fee (capped at slot-1 price). 0 when first area is free.
+  first-area-bank-seed-g: 0.0
+  # Explicit expansion ladder (G): index 0 = level 1→2, 1 = 2→3, … If non-empty, overrides formula.
+  # Example for 9 expansions to reach level 10:
+  # expansion-prices-g: [75, 112.5, 168.75, 253.125, 379.688, 569.531, 854.297, 1281.445, 1922.168]
+  expansion-prices-g: []
+  # Used when expansion-prices-g is empty: price = base × multiplier^(currentLevel-1)
   expansion-base-price-g: 75.0
   expansion-multiplier: 1.5
   unclaim-refund-percent: 50.0
   treasury-channel: "service-fee:claim"
+
+timings:
+  confirm-ttl-seconds: 30
+  spawn-cooldown-seconds: 3
 
 protection:
   protect-containers: true
@@ -76,10 +88,11 @@ messages:
   no-economy: "&cEconomy is not ready. Try again later."
   cannot-afford: "&ePrice: &f{price} G&e. Your wallet does not have enough Gold."
   confirm-area-found: "&eConfirm founding area &f{name}&e for &f{price} G&e from your wallet. Expires in &f{seconds}s&e."
+  confirm-area-found-free: "&eConfirm founding free area &f{name}&e (expansions still cost Gold from the area bank). Expires in &f{seconds}s&e."
   confirm-claim: "&eConfirm founding a new area here for &f{price} G&e. Expires in &f{seconds}s&e."
   confirm-claim-expansion: "&eConfirm expansion for &f{price} G&e from the area bank. Anchor snaps to the rim. Expires in &f{seconds}s&e."
-  confirm-unclaim: "&eConfirm removing this circle from &f{owner}&e's area. Refund: &f{refund} G&e (50%). Expires in &f{seconds}s&e."
-  confirm-unclaim-all: "&eConfirm removing all &f{count}&e circle(s). Land refund: &f{refund} G&e (50%). Area banks return: &f{bank} G&e. Expires in &f{seconds}s&e."
+  confirm-unclaim: "&eConfirm removing this circle from &f{owner}&e's area. Refund: &f{refund} G&e ({refund_pct}%). Expires in &f{seconds}s&e."
+  confirm-unclaim-all: "&eConfirm removing all &f{count}&e circle(s). Land refund: &f{refund} G&e ({refund_pct}%). Area banks return: &f{bank} G&e. Expires in &f{seconds}s&e."
   confirm-trust: "&eConfirm adding &f{player}&e as a member of &f{owner}&e's area. Expires in &f{seconds}s&e."
   confirm-untrust: "&eConfirm removing &f{player}&e from &f{owner}&e's area. Expires in &f{seconds}s&e."
   confirm-none: "&eNo claim action is waiting for confirmation."
@@ -110,9 +123,9 @@ messages:
   claim-already-owned: "&eThis spot is already inside &f{owner}&e's claim."
   claim-overlaps-other: "&eThat anchor would overlap &f{owner}&e's claim."
   claim-foreign-territory: "&eThat spot is inside &f{owner}&e's territory (+{buffer} blocks past their claim). Ask them to &f/c add&e you, or claim farther away."
-  claim-needs-edge: "&eStand on the rim of one of your areas to expand. Expansions snap to that edge (within &f3&e blocks)."
+  claim-needs-edge: "&eStand on the rim of one of your areas to expand. Expansions snap to that edge (within &f{tolerance}&e blocks)."
   claim-needs-area: "&eFound an area first with &f/c new&e before expanding."
-  claim-bank-cannot-afford: "&eExpansion price: &f{price} G&e. Deposit to the area bank with &f/c bank deposit <amount>&e."
+  claim-bank-cannot-afford: "&eExpansion price: &f{price} G&e. Deposit to the area bank with &f/c deposit all&e or &f/c deposit <amount>&e."
   claim-bank-charge-failed: "&cCould not charge the area bank. Try again later."
   claim-limit: "&eClaim limit reached: &f{count}/{limit}&e."
   area-limit: "&eArea limit reached: &f{count}/{limit}&e."
@@ -124,7 +137,7 @@ messages:
   unclaim-refund: "&aRefunded &f{amount} G&a to your wallet."
   unclaim-bank-refund: "&aRefunded &f{amount} G&a to the area bank."
   unclaim-all-success: "&aRemoved all &f{count}&a of your claim circles."
-  unclaim-all-land-refund: "&aLand refund: &f{amount} G&a (50%)."
+  unclaim-all-land-refund: "&aLand refund: &f{amount} G&a ({refund_pct}%)."
   unclaim-all-bank-return: "&aReturned &f{amount} G&a from area banks to your wallet."
   unclaim-all-refund-failed: "&eClaims were removed, but the land refund could not be paid from the Server Reserve. Contact staff."
   unclaim-none: "&eThis spot is not claimed."
@@ -134,13 +147,14 @@ messages:
   trust-usage: "&eUsage: &f/c add <player>&e or &f/c untrust <player>"
   toggle-usage: "&eUsage: &f/c toggle mobs <on|off>&e or &f/c toggle spawn <on|off>"
   toggle-mobs-on: "&aHostile mobs are now allowed in this claim."
-  toggle-mobs-off: "&aHostile mobs are now blocked in this claim (despawned &f{count}&a). &7Hostiles that walk in will despawn. Creeper block damage is always protected."
+  toggle-mobs-off: "&aHostile mobs are now blocked in this claim (despawned &f{count}&a). &7Territory (+{buffer}) still spawns hostiles. Hostiles that walk into the claim despawn. Creeper block damage is always protected."
   toggle-spawn-public: "&aArea spawn is now &fpublic&a. Others can use &f/spawn <your name>&a."
   toggle-spawn-private: "&aArea spawn is now &fprivate&a. Only you and members can use it."
   bank-no-claim: "&eYou do not own an area bank yet."
-  bank-usage: "&eUsage: &f/c bank&e or &f/c bank deposit <amount>"
-  bank-info: "&7{claim} bank: &f{balance} G&7. Next expansion: &f{price} G&7. Area banks are tax-free. Deposit with &f/c bank deposit <amount>&7."
+  bank-usage: "&eUsage: &f/c bank&e · &f/c deposit <amount|all>&e · &f/c bank deposit <amount|all>"
+  bank-info: "&7{claim} bank: &f{balance} G&7. Next expansion: &f{price} G&7. Area banks are tax-free. Deposit with &f/c deposit <amount|all>&7."
   bank-cannot-afford: "&eYour wallet does not have &f{amount} G&e for that deposit."
+  bank-deposit-empty: "&eYour wallet is empty — nothing to deposit."
   bank-deposit-failed: "&cArea bank deposit failed. Try again later."
   bank-deposit-success: "&aDeposited &f{amount} G&a to this area bank. Balance: &f{balance} G&a."
   bank-owner-deposit: "&aArea bank deposit: &f+{amount} G&a from &f{player}&a. Balance: &f{balance} G&a."
@@ -175,7 +189,7 @@ messages:
   help:
     - "&6RootClaims &7(/c, /claim, /claims)"
     - "&f/c &7- open claims dashboard"
-    - "&f/c new [name] &7- found a new area (75 / 1000 / 10000 G; must max prior areas first)"
+    - "&f/c new [name] &7- found a new area (prices in root-claims.yml economy.area-prices-g)"
     - "&f/c claim &7- expand the area you are on (rim snap; paid from area bank)"
     - "&7Confirmations use clickable &a[Confirm]&7 / &c[Cancel]&7 buttons"
     - "&f/c chest &7- open the claim community chest (owner + members)"
@@ -183,10 +197,11 @@ messages:
     - "&f/spawn &7- server spawn · &f/spawn <player|area> [area] &7- visit an area spawn"
     - "&f/c set spawn &7- set this area's spawn (must be inside)"
     - "&f/c bank &7- view the area bank used for expansions"
-    - "&f/c bank deposit <amount> &7- fund your area bank"
+    - "&f/c deposit <amount|all> &7- fund your area bank from wallet"
+    - "&f/c bank deposit <amount|all> &7- same as /c deposit"
     - "&f/c info &7- inspect this claim area"
     - "&f/c unclaim &7- remove this circle (outer expansions first)"
-    - "&f/c unclaim all &7- remove every area you own (50% land refund + bank return)"
+    - "&f/c unclaim all &7- remove every area you own (configurable land refund + bank return)"
     - "&f/c add <player> &7- add a member (same as trust/friend)"
     - "&f/c untrust <player> &7- remove a member"
     - "&f/c toggle mobs <on|off> &7- allow or block hostile mobs"
